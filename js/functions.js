@@ -1,339 +1,478 @@
-// General-purpose actions in the game.
+var Game = {};
 
-Game.do = (function() {
-	/**
-	 * A function for adding a disc to our Connect Four board state.
-	 *
-	 * @param number x_pos The x-position of the location chosen.
-	 * @param number y_pos The y-position of the location chosen.
-	 */
-	function addDiscToBoard(x_pos, y_pos) {
-		Game.board[y_pos][x_pos] = Game.currentPlayer;
+(function(Game) {
+	// Player
+	Game.states = {};
+	Game.Player = function(name, isPlayer) {
+		this.name      = name;
+		this.user_name = name;
+		this.player    = isPlayer;
+		this.next      = null;
+		this.prev      = null;
+
+		// Register state
+		Game.states[name] = this;
 	}
 
-	/**
-	 * Print the contents of our Game.board state to the html page.
-	 */
-	function printBoard() {
-		for (let y = 0; y < Game.config.boardHeight; y++) {
-			for (let x = 0; x < Game.config.boardLength; x++) {
-				if (Game.check.isPositionTaken(x, y)) {
-					const row = document.querySelector('tr:nth-child(' + (1 + y) + ')');
-					const cell = row.querySelector('td:nth-child(' + (1 + x) + ')');
-					cell.firstElementChild.classList.add(Game.board[y][x]);
-				}
+	Game.Player.prototype.setNext = function(next) {
+		if (this.next) {
+			throw `${this.name}.next already set!`;
+		}
+		if (next.prev) {
+			throw `${next.name}.prev already set!`;
+		}
+		this.next = next;
+		next.prev = this;
+	}
+
+	// Cell state definitions
+	const empty = new Game.Player('empty', false);
+	const dead  = new Game.Player('dead' , false);
+	const red   = new Game.Player('red'  , true );
+	const black = new Game.Player('black', true );
+
+	red  .setNext(black);
+	black.setNext(red  );
+
+
+	Game.player_counts = function(all, value) {
+		const counts = {};
+		value = value ?? 0;
+		for (const name in Game.states) {
+			const state = Game.states[name];
+			if (state.player || all)
+				counts[name] = value;
+		}
+		return counts;
+	}
+
+
+	// Game spec
+	const vectors = [
+		{x: 1, y: 0},
+		{x: 1, y: 1},
+		{x: 0, y: 1},
+		{x:-1, y: 1},
+		// Negation of first four vectors
+		{x:-1, y: 0},
+		{x:-1, y:-1},
+		{x: 0, y:-1},
+		{x: 1, y:-1}
+	];
+
+	Game.Spec = function(w, h, len) {
+		this.w = w;
+		this.h = h;
+		this.len = len;
+		this.states = {...Game.states};
+	}
+
+	Game.Spec.prototype.in_range = function(x, y) {
+		return x >= 0 && y >= 0 && x < this.w && y < this.h;
+	}
+
+	Game.Spec.prototype.scan = function(x0, y0, v, cb) {
+		//console.log(`Scan from (${x0}, ${y0}) [${this.getCell(x0, y0).name}]: Δ(${v.x}, ${v.y})`);
+
+		let x = x0;
+		let y = y0;
+
+		// Start at 1: the caller should have already done 0
+		let i = 1;
+		while (true) {
+			x += v.x;
+			y += v.y;
+
+			if (cb(i, x, y))
+				break;
+
+			// Complain if cb doesn't catch scan going out of bounds.
+			if (!this.in_range(x, y)) {
+				console.error(`Scan went out of bounds! ${i}: (${x}, ${y}), Δ(${v.x}, ${v.y})`);
+				break;
+			}
+
+			i++;
+			if (i > 1000) {
+				console.error(`Runaway scan! ${i}: (${x}, ${y}), Δ(${v.x}, ${v.y})`);
 			}
 		}
+
+		return i;
 	}
 
-	function getOtherPlayer(player) {
-		return (player === 'black') ? 'red' : 'black';
+
+	// Game state
+	Game.Board = function(parent) {
+		this.parent = parent;
+
+		this.spec           = parent?.spec;
+		this.player         = parent?.player;
+		this.movesRemaining = parent?.movesRemaining ?? 0;
+
+		this.cells = [];
+		this.heights = [];
+
+		this.counts = {};
+
+		this.moves = null;
+		this.results = [];
 	}
 
-	/**
-	 * Update displayed current player
-	 */
-	function showPlayer() {
-		const currentPlayerNameEl = document.querySelector('#current-player');
-		const otherPlayerNameEl = document.querySelector('#other-player');
+	Game.Board.prototype.init = function(spec) {
+		this.spec = spec;
 
-		const otherPlayerName = currentPlayerNameEl.textContent;
-		const currentPlayerName = otherPlayerNameEl.textContent;
-		const otherPlayer = getOtherPlayer(Game.currentPlayer);
+		for (let x = 0; x < spec.w; x++) {
+			this.heights[x] = spec.h-1;
+		}
 
-		// Update the players in the UI.
-		currentPlayerNameEl.classList.remove(otherPlayer);
-		currentPlayerNameEl.classList.add(Game.currentPlayer);
-		currentPlayerNameEl.textContent = currentPlayerName;
+		this.counts = Game.player_counts(true);
 
-		otherPlayerNameEl.classList.remove(Game.currentPlayer);
-		otherPlayerNameEl.classList.add(otherPlayer);
-		otherPlayerNameEl.textContent = otherPlayerName;
-	}
+		const cells = this.cells;
 
-	/**
-	 * Change current player state
-	 */
-	function changePlayer() {
-		// Switch players
-		Game.currentPlayer = (Game.currentPlayer === 'black') ? 'red' : 'black';
-
-		showPlayer();
-	}
-
-	/**
-	 * If there are empty positions below the one chosen, return the new y-position
-	 * we should drop the piece to.
-	 *
-	 * @param number x_pos The x-position of the location chosen.
-	 * @param number y_pos The y-position of the location chosen.
-	 * @return number - The y-position the disc should fall into.
-	 */
-	function dropToBottom(x_pos, y_pos) {
-		// Start at the bottom of the column, and step up, checking to make sure
-		// each position has been filled. If one hasn't, return the empty position.
-		for (let y = Game.config.boardHeight-1; y > y_pos; y--) {
-			if (!Game.check.isPositionTaken(x_pos, y)) {
-				return y;
+		for (let y = 0; y < spec.h; y++) {
+			for (let x = 0; x < spec.w; x++) {
+				this.setCell(x, y, Game.states.empty);
 			}
 		}
-		return y_pos;
+
+		return this;
+	}
+	Game.Board.prototype.clone = function() {
+		const board2 = new Game.Board(this);
+
+		board2.cells   = [...this.cells  ];
+		board2.heights = [...this.heights];
+		board2.counts  = {...this.counts };
+
+		return board2;
 	}
 
-	/**
-	 * Handle edge-cases in name changes
-	 * @param event
-	 */
-	function handleNameChange(event) {
-		// Prevent the default "newline" behavior when hitting "Enter"
-		if (event.keyCode === 13) {
-			event.preventDefault();
-			document.body.focus();
-		}
+	Game.Board.prototype.getCell = function(x, y) {
+		if (!this.spec.in_range(x, y))
+			return Game.states.dead;
+		return this.cells[y*this.spec.w + x] ?? Game.states.empty;
 	}
 
-	return {
-		addDiscToBoard,
-		printBoard,
-		changePlayer,
-		showPlayer,
-		dropToBottom,
-		handleNameChange
-	};
-})();
+	Game.Board.prototype.setCell = function(x, y, state) {
+		if (!this.spec.in_range(x, y))
+			return false;
 
+		const i = y*this.spec.w + x;
+		const prev = this.cells[i];
+		this.cells[i] = state;
 
+		if (state) this.counts[state.name]++;
+		if (prev ) this.counts[prev .name]--;
 
-// General-purpose status checks for the game.
-
-Game.check = (function() {
-	/**
-	 * Test to ensure the chosen location isn't taken.
-	 *
-	 * @param number x_pos The x-position of the location chosen.
-	 * @param number y_pos The y-position of the location chosen.
-	 * @return bool returns true or false for the question "Is this spot taken?".
-	 */
-	function isPositionTaken(x_pos, y_pos) {
-		return Game.board[y_pos][x_pos] !== 0;
+		return prev ?? Game.states.empty;
 	}
 
-	/**
-	 * Determine if the game is a draw (all peices on the board are filled).
-	 *
-	 * @return bool Returns true or false for the question "Is this a draw?".
-	 */
-	function isGameADraw() {
-		for (let y = 0; y < Game.config.boardHeight; y++) {
-			for (let x = 0; x < Game.config.boardLength; x++) {
-				if (!isPositionTaken(x, y)) {
-					return false;
-				}
+	Game.Board.prototype.isPositionTaken = function(x, y) {
+		return this.getCell(x, y) !== Game.states.empty;
+	}
+
+
+	Game.Board.prototype.scan = function(x0, y0, v, cb) {
+		const board = this;
+		return this.spec.scan(x0, y0, v, (i, x, y) => {
+			const curr = this.getCell(x, y);
+			return cb(i, x, y, curr);
+		});
+	}
+
+	Game.Board.prototype.checkDead = function(x, y) {
+		const state0 = this.getCell(x, y);
+
+		// A non-player cell can't die
+		if (!state0.player)
+			return false;
+
+		for (let vi = 0; vi < 4; vi++) {
+			const vp = vectors[vi  ];
+			const vn = vectors[vi+4];
+
+			let count = 1;
+
+			for (const v of [vp, vn]) {
+				this.scan(x, y, v, (i, x, y, curr) => {
+					// Stop when we hit a dead cell
+					if (curr === Game.states.dead)
+						return true;
+					// Stop when we hit a cell belonging to the other player
+					if (curr.player && curr !== state0)
+						return true;
+					count++;
+				});
+			}
+
+			if (count >= Game.config.countToWin) {
+				return false;
 			}
 		}
+
+		this.setCell(x, y, Game.states.dead);
+
 		return true;
 	}
 
-	/**
-	 * Test to see if somebody got four consecutive horizontal pieces.
-	 *
-	 * @return bool Returns true if a win was found, and otherwise false.
-	 */
-	function isHorizontalWin() {
-		let currentValue = null,
-		    previousValue = 0,
-		    tally = 0;
+	Game.Board.prototype.findDead = function(x, y) {
+		// Disc could be dropped into dead position
+		this.checkDead(x, y)
 
-		// Scan each row in series, tallying the length of each series. If a series
-		// ever reaches four, return true for a win.
-		for (let y = 0; y < Game.config.boardHeight; y++) {
-			for (let x = 0; x < Game.config.boardLength; x++) {
-				currentValue = Game.board[y][x];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
-				}
-				if (tally === Game.config.countToWin - 1) {
+		const state0 = this.getCell(x, y);
+		for (let vi = 0; vi < 8; vi++) {
+			const v = vectors[vi];
+
+			this.scan(x, y, v, (i, x, y, curr) => {
+				this.checkDead(x, y)
+				// Stop when we hit a dead cell
+				if (curr === Game.states.dead)
 					return true;
-				}
-				previousValue = currentValue;
-			}
-
-			// After each row, reset the tally and previous value.
-			tally = 0;
-			previousValue = 0;
+				// TODO: Stop once we've covered enough cells for a win
+				if (i >= Game.config.countToWin)
+					return true;
+			});
 		}
-
-		// No horizontal win was found.
-		return false;
 	}
 
-	/**
-	 * Test to see if somebody got four consecutive vertical pieces.
-	 *
-	 * @return bool Returns true if a win was found, and otherwise false.
-	 */
-	function isVerticalWin() {
-		let currentValue = null,
-		    previousValue = 0,
-		    tally = 0;
+	Game.Board.prototype.checkWin = function(x, y) {
+		const state0 = this.getCell(x, y);
 
-		// Scan each column in series, tallying the length of each series. If a
-		// series ever reaches four, return true for a win.
-		for (let x = 0; x < Game.config.boardLength; x++) {
-			for (let y = 0; y < Game.config.boardHeight; y++) {
-				currentValue = Game.board[y][x];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
-				}
-				if (tally === Game.config.countToWin - 1) {
+		// A non-player can't win
+		if (!state0.player)
+			return null;
+
+		for (let vi = 0; vi < 4; vi++) {
+			const vp = vectors[vi  ];
+			const vn = vectors[vi+4];
+
+			const result = {player: state0, origin: {x, y}, dir: vp};
+
+			let count = 1;
+
+			this.scan(x, y, vp, (i, x, y, curr) => {
+				if (curr !== state0)
 					return true;
-				}
-				previousValue = currentValue;
-			}
+				count++;
+				result.start = {x, y};
+			});
 
-			// After each column, reset the tally and previous value.
-			tally = 0;
-			previousValue = 0;
+			this.scan(x, y, vn, (i, x, y, curr) => {
+				if (curr !== state0)
+					return true;
+				count++;
+				result.end = {x, y};
+			});
+
+			//console.log(x, y, v, count);
+
+			if (count >= Game.config.countToWin) {
+				result.status = 'win';
+				this.results.push(result);
+				return result;
+			}
 		}
 
-		// No vertical win was found.
-		return false;
+		return null;
 	}
 
+	Game.Board.prototype.checkDrawn = function() {
+		if (this.results.length)
+			return this.results;
+
+		// TODO: But it isn't a draw if it's a win.
+		if (!this.counts[Game.states.empty.name]) {
+			//console.log('All cells are filled');
+
+			const result = {status: 'draw'};
+			this.results.push(result);
+			return result;
+		}
+
+		return null;
+	}
+
+	// Determine whether a move is valid, and set or fix its y coordinate
+	Game.Board.prototype.testMove = function(move) {
+		const x = move.x;
+		const y = this.heights[x];
+		// Column full
+		if (y < 0) {
+			//console.error(`Column ${move.x} is full!`);
+			return false;
+		}
+		// If a y was specified, it must be correct
+		if (move.y != null && move.y > y) {
+			//console.log(`Illegal move: (${move.x}, ${move.y}) already taken by ${this.getCell(move.x, move.y).name}`);
+			return false;
+		}
+
+		this.heights[x]--;
+
+		if (this.isPositionTaken(x, y)) {
+			console.error(`Corrupt height table: (${x}, ${y}) already taken by ${this.getCell(move.x, move.y).name}`);
+			return false;
+		}
+
+		move.y = y;
+
+		return true;
+	}
+
+	Game.Board.prototype.move = function(moves, player) {
+		if (this.results.length) {
+			console.error(`Player ${player.name} tried moving even though game is already over!`);
+			return null;
+		}
+
+		const board2 = this.clone();
+
+		if (board2.player != player) {
+			console.error(`Player ${player.name} tried moving during ${board2.player.name}'s turn!`);
+			return null;
+		}
+
+		if (moves.length > board2.movesRemaining) {
+			console.error(`Player ${player.name} tried making ${moves.length} moves when he only had ${board2.movesRemaining} left this turn!`);
+			return null;
+		}
+
+		for (const move of moves) {
+			if (!board2.testMove(move)) {
+				// Illegal move.
+				return null;
+			}
+
+			board2.setCell(move.x, move.y, player);
+			board2.movesRemaining--;
+		}
+
+		for (const move of moves) {
+			const x = move.x;
+			const y = move.y;
+
+			board2.findDead(x, y);
+
+			board2.checkWin(x, y);
+		}
+
+		board2.moves = moves;
+
+		// Check to see if the game is over.
+		board2.checkDrawn()
+
+		// Only consider switching player if game isn't over.
+		if (!board2.results.length) {
+			if (board2.movesRemaining <= 0) {
+				// Change player and reset number of moves
+				board2.movesRemaining = Game.config.movesPerTurn;
+				board2.player = board2.player.next;
+			}
+		}
+
+		return board2;
+	}
+})(Game);
+
+Game.do = (function() {
 	/**
-	 * Test to see if somebody got four consecutive diagonel pieces.
-	 *
-	 * @return bool Returns true if a win was found, and otherwise false.
+	 * Print the contents of our Game.board state to the html page.
+	 * Update displayed current player
+	 * TODO: Rename to e.g. showBoard
 	 */
-	function isDiagonalWin() {
-		let currentValue = null,
-		    previousValue = 0,
-		    tally = 0;
+	function setBoard(board) {
+		Game.board = board;
 
-		// Test for down-right diagonals across the top.
-		for (let x = 0; x < Game.config.boardLength; x++) {
-			let xtemp = x;
-			let ytemp = 0;
-
-			while (xtemp < Game.config.boardLength && ytemp < Game.config.boardHeight) {
-				currentValue = Game.board[ytemp][xtemp];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
+		// Update displayed board
+		for (let y = 0; y < board.spec.h; y++) {
+			for (let x = 0; x < board.spec.w; x++) {
+				const row = document.querySelector('tr:nth-child(' + (1 + y) + ')');
+				const cell = row.querySelector('td:nth-child(' + (2 + x) + ')');
+				const button = cell.firstElementChild;
+				const disc = board.getCell(x, y);
+				for (const name in Game.states) {
+					if (disc.name === name)
+						button.classList.add(name);
+					else
+						button.classList.remove(name);
 				}
-				if (tally === Game.config.countToWin - 1) {
-					return true;
-				}
-				previousValue = currentValue;
-
-				// Shift down-right one diagonal index.
-				xtemp++;
-				ytemp++;
 			}
-			// Reset the tally and previous value when changing diagonals.
-			tally = 0;
-			previousValue = 0;
 		}
 
-		// Test for down-left diagonals across the top.
-		for (let x = 0; x < Game.config.boardLength; x++) {
-			let xtemp = x;
-			let ytemp = 0;
+		// Update the players in the UI.
+		const currentPlayerNameEl = document.querySelector('#current-player');
+		const otherPlayerNameEl = document.querySelector('#other-player');
 
-			while (0 <= xtemp && ytemp < Game.config.boardHeight) {
-				currentValue = Game.board[ytemp][xtemp];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
-				}
-				if (tally === Game.config.countToWin - 1) {
-					return true;
-				}
-				previousValue = currentValue;
+		const currentPlayer = board.player;
+		const otherPlayer = currentPlayer.next;
 
-				// Shift down-left one diagonal index.
-				xtemp--;
-				ytemp++;
+		currentPlayerNameEl.classList.remove(otherPlayer.name);
+		currentPlayerNameEl.classList.add(currentPlayer.name);
+		currentPlayerNameEl.textContent = currentPlayer.user_name;
+
+		otherPlayerNameEl.classList.remove(currentPlayer.name);
+		otherPlayerNameEl.classList.add(otherPlayer.name);
+		otherPlayerNameEl.textContent = otherPlayer.user_name;
+
+		// Update top controls
+		const controlsWrapperEl = document.querySelector('.top-text');
+		const movesRemainingEl = document.querySelector('#moves-remaining');
+
+		const prefixEl = document.querySelector('#prefix');
+		const undoEl = document.querySelector('#undo');
+		const playAgainBtnEl = document.querySelector('#play-again-btn');
+
+		const results = board.results;
+		const result_status = results[0]?.status;
+
+		currentPlayerNameEl.style.display = result_status == 'draw' ? 'none' : '';
+		currentPlayerNameEl.contentEditable = !result_status;
+		movesRemainingEl.textContent = board.movesRemaining + " " + (board.movesRemaining == 1 ? "move" : "moves") + " remaining";
+		undoEl.disabled = !Game.board.parent;
+		playAgainBtnEl.disabled = !result_status;
+
+		if (result_status) {
+			controlsWrapperEl.classList.add('game-over');
+			if (result_status == 'win') {
+				prefixEl.textContent = Game.config.winMsg;
+			} else if (result_status == 'draw') {
+				prefixEl.textContent = Game.config.drawMsg;
 			}
-			// Reset the tally and previous value when changing diagonals.
-			tally = 0;
-			previousValue = 0;
+		} else {
+			prefixEl.textContent = Game.config.currentMsg;
+			controlsWrapperEl.classList.remove('game-over');
 		}
 
-		// Test for down-right diagonals down the left side.
-		for (let y = 0; y < Game.config.boardHeight; y++) {
-			let xtemp = 0;
-			let ytemp = y;
+		return board;
+	}
 
-			while (xtemp <= Game.config.boardLength && ytemp < Game.config.boardHeight) {
-				currentValue = Game.board[ytemp][xtemp];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
-				}
-				if (tally === Game.config.countToWin - 1) {
-					return true;
-				}
-				previousValue = currentValue;
+	function move(moves) {
+		// Drop piece to the bottom of the column.
+		// Add the piece to the board.
 
-				// Shift down-right one diagonal index.
-				xtemp++;
-				ytemp++;
-			}
-			// Reset the tally and previous value when changing diagonals.
-			tally = 0;
-			previousValue = 0;
+		const next = Game.board.move(moves, Game.board.player);
+		if (!next) {
+			console.log(`Illegal move: ${moves[0].x}, ${moves[0].y}`);
+			return false;
 		}
 
-		// Test for down-left diagonals down the right side.
-		for (let y = 0; y < Game.config.boardHeight; y++) {
-			let xtemp = Game.config.boardLength-1;
-			let ytemp = y;
+		Game.do.setBoard(next);
 
-			while (0 <= xtemp && ytemp < Game.config.boardHeight) {
-				currentValue = Game.board[ytemp][xtemp];
-				if (currentValue === previousValue && currentValue !== 0) {
-					tally += 1;
-				} else {
-					// Reset the tally if you find a gap.
-					tally = 0;
-				}
-				if (tally === Game.config.countToWin - 1) {
-					return true;
-				}
-				previousValue = currentValue;
-
-				// Shift down-left one diagonal index.
-				xtemp--;
-				ytemp++;
-			}
-			// Reset the tally and previous value when changing diagonals.
-			tally = 0;
-			previousValue = 0;
+		if (Game.board.results) {
+			return Game.board.results;
 		}
 
-		// No diagonal wins found. Return false.
-		return false;
+		return true;
+	}
+
+	function takeback() {
+		return Game.board.parent && Game.do.setBoard(Game.board.parent);
 	}
 
 	return {
-		isPositionTaken,
-		isGameADraw,
-		isHorizontalWin,
-		isVerticalWin,
-		isDiagonalWin
-	}
-
+		setBoard,
+		move,
+		takeback,
+	};
 })();

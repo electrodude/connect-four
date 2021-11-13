@@ -1,4 +1,6 @@
-# Connect Four
+# Double Connect Four Engine
+
+## Originally based on: Connect Four
 
 An implementation of Connect Four in Javascript.
 
