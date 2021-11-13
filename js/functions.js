@@ -65,6 +65,63 @@ var Game = {};
 		this.h = h;
 		this.len = len;
 		this.states = {...Game.states};
+
+		// Initialize table mapping each cell => [relevant runs]
+		const run_map = [];
+		this.run_map = run_map;
+		for (let i = 0; i < w*h; i++)
+			run_map[i] = [];
+
+		const runs = [];
+		this.runs = runs;
+		const len_1 = len-1;
+		// Build table of all possible runs
+		for (let y = 0; y < h; y++) {
+			for (let x = 0; x < w; x++) {
+				for (let vi = 0; vi < 4; vi++) {
+					const v = vectors[vi];
+
+					// Skip runs that don't fit on the board.
+					if (!this.in_range(x + v.x*len_1, y + v.y*len_1))
+						continue;
+
+					const run = [];
+					const win = {run, id: runs.length};
+					runs.push(win);
+
+					run.push({x, y});
+					run_map[y*w + x].push(win);
+					this.scan(x, y, v, (i, x, y) => {
+						run.push({x, y});
+						//console.log(x, y, w, h, y*w + x);
+						run_map[y*w + x].push(win);
+
+						if (i >= len_1)
+							return true;
+					});
+				}
+			}
+		}
+
+		this.moves = [];
+		for (let i = 0; i <= Game.config.movesPerTurn; i++) {
+			const partial = [];
+			const maxdepth = i;
+			const width = this.w;
+			function* enumerate_moves(depth, start) {
+				for (let x = start; x < width; x++) {
+					partial[depth] = x;
+					if (depth >= maxdepth - 1) {
+						yield [...partial];
+					} else {
+						yield* enumerate_moves(depth + 1, x);
+					}
+				}
+			}
+
+			this.moves[i] = [...enumerate_moves(0, 0)];
+		}
+
 	}
 
 	Game.Spec.prototype.in_range = function(x, y) {
@@ -113,6 +170,8 @@ var Game = {};
 		this.cells = [];
 		this.heights = [];
 
+		this.runs = [];
+		this.wins = {};
 		this.counts = {};
 
 		this.moves = null;
@@ -126,6 +185,10 @@ var Game = {};
 			this.heights[x] = spec.h-1;
 		}
 
+		for (let i = 0; i < spec.runs.length; i++) {
+				this.runs[i] = Game.player_counts(true);
+		}
+		this.wins   = Game.player_counts(true, spec.runs.length);
 		this.counts = Game.player_counts(true);
 
 		const cells = this.cells;
@@ -143,6 +206,8 @@ var Game = {};
 
 		board2.cells   = [...this.cells  ];
 		board2.heights = [...this.heights];
+		board2.runs    = [...this.runs   ];
+		board2.wins    = {...this.wins   };
 		board2.counts  = {...this.counts };
 
 		return board2;
@@ -162,6 +227,33 @@ var Game = {};
 		const prev = this.cells[i];
 		this.cells[i] = state;
 
+		for (const run_spec of this.spec.run_map[i]) {
+			const run_orig = this.runs[run_spec.id];
+			const run = {...run_orig};
+
+			if (state) run[state.name]++;
+			if (prev ) run[prev .name]--;
+
+			if (state?.player && run[state.name] >= this.spec.len) {
+				// Add win
+				this.results.push({status: 'win', run: run_spec.id, player: state});
+			}
+			if (prev?.player && run[prev.name] == this.spec.len-1) {
+				// TODO: Correctly back out of win
+				console.error(`NYI: Back out of win for ${prev.name}`, run_spec);
+			}
+			if (prev?.player && !run[prev.name]) {
+				// Regain run for prev.next
+				this.wins[prev.next.name]++;
+			}
+			if (state?.player && run[state.name] == 1) {
+				// Lose run for state.next
+				this.wins[state.next.name]--;
+			}
+
+			this.runs[run_spec.id] = run;
+		}
+
 		if (state) this.counts[state.name]++;
 		if (prev ) this.counts[prev .name]--;
 
@@ -173,6 +265,202 @@ var Game = {};
 	}
 
 
+	Game.Board.prototype.evaluate_position = function(min_depth, max_depth, max_time) {
+
+		const time_start = new Date().getTime();
+
+		// Statistics
+		let estimates = 0;
+		let pvs = 0;
+		const wins = Game.player_counts();
+		let draws = 0;
+		let cutoffs = 0;
+
+		// Killer move table
+		//const killer = {};
+
+		function eval_static(board) {
+			// Statically evaluate position from perspective of board.player
+
+			const player = board.player;
+
+			// Game over
+			if (board.results.length) {
+				let score = 0;
+				for (const result of board.results) {
+					if (result.status == 'win') {
+						wins[result.player.name]++;
+						if (result.player === player)
+							score +=  1e6;
+						else
+							score += -1e6;
+					} else if (result.status == 'draw') {
+						draws++;
+					}
+				}
+				return score;
+			}
+
+			// Mine vs. his
+			//const score = board.counts[player.name] - board.counts[player.next.name];
+			//const score = board.wins[player.name] - board.wins[player.next.name];
+
+			let score = 0;
+			const cells = board.spec.w*board.spec.h;
+			for (let i = 0; i < cells; i++) {
+				for (const run_spec of board.spec.run_map[i]) {
+					const run = board.runs[run_spec.id];
+					const len_curr = run[player     .name];
+					const len_next = run[player.next.name];
+					if (len_curr && !len_next) {
+						score += len_curr*len_curr;
+					} else if (len_next && !len_curr) {
+						score -= len_next*len_next;
+					}
+				}
+			}
+
+			estimates++;
+
+			return score;
+		}
+
+		let pv = [];
+		function negamax(board, depth, depth_root, alpha, beta, on_pv) {
+			// Deal with trivial cases first
+			if (depth <= 0 || board.results.length) {
+				const score_static = eval_static(board)
+				return {eval_score: score_static};
+			}
+
+			// Enumerate legal moves and call static evaluator on each
+			const moves = [];
+			for (const move_x of board.spec.moves[board.movesRemaining]) {
+				/*
+				// Optimization to avoid copying the board on illegal moves
+				if (move_x.length == 2) {
+					if (move_x[0] != move_x[1]) {
+						if (board.heights[move_x[0]] <= 1 || board.heights[move_x[1]] <= 1)
+							continue;
+					} else {
+						if (board.heights[move_x[0]] <= 2)
+							continue;
+					}
+				}
+				*/
+				const move = [];
+				for (const i in move_x) {
+					move[i] = {x: move_x[i]};
+				}
+
+				const board_moved = board.move(move, board.player);
+
+				// Skip illegal moves
+				if (!board_moved)
+					continue;
+
+				if (board_moved.player == board.player)
+					console.error(`Player of next and board move are both ${board_moved.player.name}`);
+
+				let order_score = -eval_static(board_moved);
+
+				const key = move.map(m => `${m.x},${m.y}`).join('+');
+
+				/*
+				if (!killer[key])
+					killer[key] = {};
+
+				const killer_ent = killer[key];
+
+				if (killer_ent.score)
+					order_score = killer_ent.score;
+				*/
+
+				const candidate = {move, key, /*killer_ent,*/ board_moved};
+
+				if (on_pv && key == pv[depth_root]) {
+					pvs++;
+					order_score += 1000;
+					candidate.pv = true;
+				}
+
+				candidate.order_score = order_score;
+
+				moves.push(candidate);
+			}
+
+			// Sort move array best to worst (descending score)
+			moves.sort((a, b) => b.order_score - a.order_score);
+
+			// Recursive negamax with alpha-beta pruning
+			let best_move = null;
+			for (const candidate of moves) {
+				const {move, /*killer_ent,*/ board_moved, pv} = candidate;
+
+				const {next_move, eval_score} = negamax(board_moved, depth-1, depth_root+1, -beta, -alpha, pv);
+				candidate.next_move = next_move;
+				candidate.eval_score = eval_score;
+
+				const next_score = -eval_score;
+
+				// Fail high
+				if (next_score >= beta) {
+					// TODO: Killer moves
+					//killer_ent.score = -next_score;
+					//killer_ent.depth = depth-1;
+
+					cutoffs++;
+					alpha = beta;
+					break;
+				}
+				// Pass low
+				if (next_score > alpha) {
+					best_move = candidate;
+					alpha = next_score;
+				}
+			}
+
+			//console.log(`Recursive eval: ${alpha}`);
+
+			return {next_move: best_move, eval_score: alpha};
+		}
+
+		let result = null;
+
+		try {
+			for (let curr_depth = 3; (curr_depth <= min_depth || (new Date().getTime() - time_start) < max_time) && curr_depth <= max_depth; curr_depth++) {
+				estimates = 0; pvs = 0; wins.black = 0; wins.red = 0; draws = 0; cutoffs = 0;
+				result = negamax(this, curr_depth, 0, -Infinity, Infinity, true);
+				const pv2 = [];
+				for (let m = result.next_move; m; m = m.next_move)
+					pv2.push(m.key);
+				pv = pv2;
+				console.log(`${this.player?.name} score: ${result?.eval_score}; ${estimates} estimates, ${pvs} pvs, ${wins.black} black wins, ${wins.red} red wins, ${draws} draws, ${cutoffs} cutoffs, ${(new Date().getTime() - time_start)/1000} s`);
+				const msg = `Depth ${curr_depth}: PV ${pv.join(' ')}`;
+				const statusEl = document.querySelector('#engine-status');
+				statusEl.innerText = msg;
+				console.log(msg);
+			}
+		} catch (e) {
+			console.error(e);
+		}
+
+		const time_end = new Date().getTime();
+
+		if (result && result.eval_score >= 1e6) {
+			console.log(`Win guaranteed for ${this.player?.name}.`);
+		} else if (result && result.eval_score <= -1e6) {
+			console.log(`Loss inevitable for ${this.player?.name}.`);
+		}
+
+		console.log(`${this.player?.name} score: ${result?.eval_score}; ${estimates} estimates, ${pvs} pvs, ${wins.black} black wins, ${wins.red} red wins, ${draws} draws, ${cutoffs} cutoffs, ${(time_end - time_start)/1000} s`);
+		//${Object.keys(killer).length} killer entries, 
+
+		console.log(result);
+
+		return result?.next_move?.move;
+	}
+
 	Game.Board.prototype.scan = function(x0, y0, v, cb) {
 		const board = this;
 		return this.spec.scan(x0, y0, v, (i, x, y) => {
@@ -181,6 +469,7 @@ var Game = {};
 		});
 	}
 
+	/*
 	Game.Board.prototype.checkDead = function(x, y) {
 		const state0 = this.getCell(x, y);
 
@@ -276,6 +565,7 @@ var Game = {};
 
 		return null;
 	}
+	*/
 
 	Game.Board.prototype.checkDrawn = function() {
 		if (this.results.length)
@@ -344,10 +634,11 @@ var Game = {};
 				return null;
 			}
 
-			board2.setCell(move.x, move.y, player);
+			move.prev = board2.setCell(move.x, move.y, player);
 			board2.movesRemaining--;
 		}
 
+		/*
 		for (const move of moves) {
 			const x = move.x;
 			const y = move.y;
@@ -356,6 +647,7 @@ var Game = {};
 
 			board2.checkWin(x, y);
 		}
+		*/
 
 		board2.moves = moves;
 
@@ -363,15 +655,35 @@ var Game = {};
 		board2.checkDrawn()
 
 		// Only consider switching player if game isn't over.
-		if (!board2.results.length) {
+		//if (!board2.results.length) {
 			if (board2.movesRemaining <= 0) {
 				// Change player and reset number of moves
 				board2.movesRemaining = Game.config.movesPerTurn;
 				board2.player = board2.player.next;
 			}
-		}
+		//}
 
 		return board2;
+	}
+
+	// TODO
+	Game.Board.prototype.unmove = function(moves) {
+		if (this.movesRemaining == Game.config.movesPerTurn) {
+			// Change player back, with zero moves remaining
+			this.movesRemaining = 0;
+			this.player = this.player.prev;
+		}
+		if (this.movesRemaining + moves.length > Game.config.movesPerTurn) {
+			console.error(`Can't take back ${moves.length} moves, only ${Game.config.movesPerTurn - this.movesRemaining}!`);
+		}
+
+		for (const move of moves) {
+			const was = this.setCell(move.x, move.y, move.prev);
+			if (was !== this.player) {
+				console.error(`Removed ${was?.name} cell for ${player?.name}!`);
+			}
+			this.movesRemaining++;
+		}
 	}
 })(Game);
 
@@ -457,6 +769,8 @@ Game.do = (function() {
 			return false;
 		}
 
+		console.log("Wins:", next.wins);
+
 		Game.do.setBoard(next);
 
 		if (Game.board.results) {
@@ -466,6 +780,15 @@ Game.do = (function() {
 		return true;
 	}
 
+	function move_ai() {
+		const max_depth = (Game.board.counts[Game.states.empty.name] - Game.board.movesRemaining) / Game.config.movesPerTurn + 1;
+		const moves = Game.board.evaluate_position(Game.config.ai_depth, max_depth, Game.config.ai_time);
+		if (!moves) {
+			return;
+		}
+		Game.do.move(moves);
+	}
+
 	function takeback() {
 		return Game.board.parent && Game.do.setBoard(Game.board.parent);
 	}
@@ -473,6 +796,7 @@ Game.do = (function() {
 	return {
 		setBoard,
 		move,
+		move_ai,
 		takeback,
 	};
 })();

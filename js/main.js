@@ -1,4 +1,4 @@
-// Setup the main game logic.
+// Top-level glue code
 
 window.addEventListener('DOMContentLoaded', function() {
 	/// Create board
@@ -85,11 +85,13 @@ window.addEventListener('DOMContentLoaded', function() {
 	const currentPlayerNameEl = document.querySelector('#current-player');
 	const otherPlayerNameEl = document.querySelector('#other-player');
 	const undoEl = document.querySelector('#undo');
+	const aiEl = document.querySelector('#ai');
 	const playAgainEl = document.querySelector('#play-again');
 	const playAgainBtnEl = document.querySelector('#play-again-btn');
 	const gameBoardEl = document.querySelector('#board');
 
 	undoEl.addEventListener('click', () => Game.do.takeback());
+	aiEl.addEventListener('click', () => Game.do.move_ai());
 	playAgainBtnEl.addEventListener('click', resetGame);
 	currentPlayerNameEl.addEventListener("keydown", handleNameChange);
 	otherPlayerNameEl.addEventListener("keydown", handleNameChange);
