@@ -15,31 +15,31 @@ Game.do = (function() {
 	 * Print the contents of our Game.board state to the html page.
 	 */
 	function printBoard() {
-		var row, cell;
-		for (var y = 0; y <= Game.config.boardHeight; y++) {
-			for (var x = 0; x <= Game.config.boardLength; x++) {
+		for (let y = 0; y < Game.config.boardHeight; y++) {
+			for (let x = 0; x < Game.config.boardLength; x++) {
 				if (Game.check.isPositionTaken(x, y)) {
-					row = document.querySelector('tr:nth-child(' + (1 + y) + ')');
-					cell = row.querySelector('td:nth-child(' + (1 + x) + ')');
+					const row = document.querySelector('tr:nth-child(' + (1 + y) + ')');
+					const cell = row.querySelector('td:nth-child(' + (1 + x) + ')');
 					cell.firstElementChild.classList.add(Game.board[y][x]);
 				}
 			}
 		}
 	}
 
+	function getOtherPlayer(player) {
+		return (player === 'black') ? 'red' : 'black';
+	}
+
 	/**
-	 * A function for changing players both in state and on the screen.
+	 * Update displayed current player
 	 */
-	function changePlayer() {
-		var currentPlayerNameEl = document.querySelector('#current-player');
-		var otherPlayerNameEl = document.querySelector('#other-player');
+	function showPlayer() {
+		const currentPlayerNameEl = document.querySelector('#current-player');
+		const otherPlayerNameEl = document.querySelector('#other-player');
 
-		// Switch players
-		var otherPlayer = Game.currentPlayer
-		var otherPlayerName = currentPlayerNameEl.textContent;
-		var currentPlayerName = otherPlayerNameEl.textContent;
-		Game.currentPlayer = (Game.currentPlayer === 'black') ? 'red' : 'black';
-
+		const otherPlayerName = currentPlayerNameEl.textContent;
+		const currentPlayerName = otherPlayerNameEl.textContent;
+		const otherPlayer = getOtherPlayer(Game.currentPlayer);
 
 		// Update the players in the UI.
 		currentPlayerNameEl.classList.remove(otherPlayer);
@@ -49,7 +49,16 @@ Game.do = (function() {
 		otherPlayerNameEl.classList.remove(Game.currentPlayer);
 		otherPlayerNameEl.classList.add(otherPlayer);
 		otherPlayerNameEl.textContent = otherPlayerName;
+	}
 
+	/**
+	 * Change current player state
+	 */
+	function changePlayer() {
+		// Switch players
+		Game.currentPlayer = (Game.currentPlayer === 'black') ? 'red' : 'black';
+
+		showPlayer();
 	}
 
 	/**
@@ -63,7 +72,7 @@ Game.do = (function() {
 	function dropToBottom(x_pos, y_pos) {
 		// Start at the bottom of the column, and step up, checking to make sure
 		// each position has been filled. If one hasn't, return the empty position.
-		for (var y = Game.config.boardHeight; y > y_pos; y--) {
+		for (let y = Game.config.boardHeight-1; y > y_pos; y--) {
 			if (!Game.check.isPositionTaken(x_pos, y)) {
 				return y;
 			}
@@ -87,6 +96,7 @@ Game.do = (function() {
 		addDiscToBoard,
 		printBoard,
 		changePlayer,
+		showPlayer,
 		dropToBottom,
 		handleNameChange
 	};
@@ -114,8 +124,8 @@ Game.check = (function() {
 	 * @return bool Returns true or false for the question "Is this a draw?".
 	 */
 	function isGameADraw() {
-		for (var y = 0; y <= Game.config.boardHeight; y++) {
-			for (var x = 0; x <= Game.config.boardLength; x++) {
+		for (let y = 0; y < Game.config.boardHeight; y++) {
+			for (let x = 0; x < Game.config.boardLength; x++) {
 				if (!isPositionTaken(x, y)) {
 					return false;
 				}
@@ -130,14 +140,14 @@ Game.check = (function() {
 	 * @return bool Returns true if a win was found, and otherwise false.
 	 */
 	function isHorizontalWin() {
-		var currentValue = null,
+		let currentValue = null,
 		    previousValue = 0,
 		    tally = 0;
 
 		// Scan each row in series, tallying the length of each series. If a series
 		// ever reaches four, return true for a win.
-		for (var y = 0; y <= Game.config.boardHeight; y++) {
-			for (var x = 0; x <= Game.config.boardLength; x++) {
+		for (let y = 0; y < Game.config.boardHeight; y++) {
+			for (let x = 0; x < Game.config.boardLength; x++) {
 				currentValue = Game.board[y][x];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;
@@ -166,14 +176,14 @@ Game.check = (function() {
 	 * @return bool Returns true if a win was found, and otherwise false.
 	 */
 	function isVerticalWin() {
-		var currentValue = null,
+		let currentValue = null,
 		    previousValue = 0,
 		    tally = 0;
 
 		// Scan each column in series, tallying the length of each series. If a
 		// series ever reaches four, return true for a win.
-		for (var x = 0; x <= Game.config.boardLength; x++) {
-			for (var y = 0; y <= Game.config.boardHeight; y++) {
+		for (let x = 0; x < Game.config.boardLength; x++) {
+			for (let y = 0; y < Game.config.boardHeight; y++) {
 				currentValue = Game.board[y][x];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;
@@ -202,20 +212,16 @@ Game.check = (function() {
 	 * @return bool Returns true if a win was found, and otherwise false.
 	 */
 	function isDiagonalWin() {
-		var x = null,
-		    y = null,
-		    xtemp = null,
-		    ytemp = null,
-		    currentValue = null,
+		let currentValue = null,
 		    previousValue = 0,
 		    tally = 0;
 
 		// Test for down-right diagonals across the top.
-		for (x = 0; x <= Game.config.boardLength; x++) {
-			xtemp = x;
-			ytemp = 0;
+		for (let x = 0; x < Game.config.boardLength; x++) {
+			let xtemp = x;
+			let ytemp = 0;
 
-			while (xtemp <= Game.config.boardLength && ytemp <= Game.config.boardHeight) {
+			while (xtemp < Game.config.boardLength && ytemp < Game.config.boardHeight) {
 				currentValue = Game.board[ytemp][xtemp];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;
@@ -238,11 +244,11 @@ Game.check = (function() {
 		}
 
 		// Test for down-left diagonals across the top.
-		for (x = 0; x <= Game.config.boardLength; x++) {
-			xtemp = x;
-			ytemp = 0;
+		for (let x = 0; x < Game.config.boardLength; x++) {
+			let xtemp = x;
+			let ytemp = 0;
 
-			while (0 <= xtemp && ytemp <= Game.config.boardHeight) {
+			while (0 <= xtemp && ytemp < Game.config.boardHeight) {
 				currentValue = Game.board[ytemp][xtemp];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;
@@ -265,11 +271,11 @@ Game.check = (function() {
 		}
 
 		// Test for down-right diagonals down the left side.
-		for (y = 0; y <= Game.config.boardHeight; y++) {
-			xtemp = 0;
-			ytemp = y;
+		for (let y = 0; y < Game.config.boardHeight; y++) {
+			let xtemp = 0;
+			let ytemp = y;
 
-			while (xtemp <= Game.config.boardLength && ytemp <= Game.config.boardHeight) {
+			while (xtemp <= Game.config.boardLength && ytemp < Game.config.boardHeight) {
 				currentValue = Game.board[ytemp][xtemp];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;
@@ -292,11 +298,11 @@ Game.check = (function() {
 		}
 
 		// Test for down-left diagonals down the right side.
-		for (y = 0; y <= Game.config.boardHeight; y++) {
-			xtemp = Game.config.boardLength;
-			ytemp = y;
+		for (let y = 0; y < Game.config.boardHeight; y++) {
+			let xtemp = Game.config.boardLength-1;
+			let ytemp = y;
 
-			while (0 <= xtemp && ytemp <= Game.config.boardHeight) {
+			while (0 <= xtemp && ytemp < Game.config.boardHeight) {
 				currentValue = Game.board[ytemp][xtemp];
 				if (currentValue === previousValue && currentValue !== 0) {
 					tally += 1;

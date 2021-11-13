@@ -9,9 +9,8 @@ Game.config = {
 	winMsg: "The winner is: ",
 	countToWin: 4,
 
-	// note: board dimensions are zero-indexed
-	boardLength: 6,
-	boardHeight: 5,
+	boardLength: 7,
+	boardHeight: 6,
 };
 
 // Global Game State

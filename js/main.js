@@ -1,34 +1,35 @@
 // Setup the main game logic.
 
 (function () {
-	var prefixEl = document.querySelector('#prefix');
-	var primaryTextEl = document.querySelector('.primary');
-	var secondaryTextEl = document.querySelector('.secondary');
-	var currentPlayerNameEl = document.querySelector('#current-player');
-	var otherPlayerNameEl = document.querySelector('#other-player');
-	var playAgainEl = document.querySelector('#play-again');
-	var playAgainBtnEl = document.querySelector('#play-again-btn');
-	var gameBoardEl = document.querySelector('#board');
+	const prefixEl = document.querySelector('#prefix');
+	const primaryTextEl = document.querySelector('.primary');
+	const secondaryTextEl = document.querySelector('.secondary');
+	const currentPlayerNameEl = document.querySelector('#current-player');
+	const otherPlayerNameEl = document.querySelector('#other-player');
+	const playAgainEl = document.querySelector('#play-again');
+	const playAgainBtnEl = document.querySelector('#play-again-btn');
+	const gameBoardEl = document.querySelector('#board');
 
 	playAgainBtnEl.addEventListener('click', () => location.reload());
 	gameBoardEl.addEventListener('click', placeGamePiece);
 	currentPlayerNameEl.addEventListener("keydown", Game.do.handleNameChange);
 	otherPlayerNameEl.addEventListener("keydown", Game.do.handleNameChange);
+	Game.do.showPlayer();
 
 	function placeGamePiece(e) {
 		if (e.target.tagName !== 'BUTTON') return;
 
-		var targetCell = e.target.parentElement;
-		var targetRow = targetCell.parentElement;
-		var targetRowCells = [...targetRow.children];
-		var gameBoardRowsEls = [...document.querySelectorAll('#board tr')];
+		const targetCell = e.target.parentElement;
+		const targetRow = targetCell.parentElement;
+		const targetRowCells = [...targetRow.children];
+		const gameBoardRowsEls = [...document.querySelectorAll('#board tr')];
 
 		// Detect the x and y position of the button clicked.
-		var y_pos = gameBoardRowsEls.indexOf(targetRow);
-		var x_pos = targetRowCells.indexOf(targetCell);
+		const y_pos_clicked = gameBoardRowsEls.indexOf(targetRow);
+		const x_pos = targetRowCells.indexOf(targetCell);
 
-		// Ensure the piece falls to the bottom of the column.
-		y_pos = Game.do.dropToBottom(x_pos, y_pos);
+		// Drop piece to the bottom of the column.
+		const y_pos = Game.do.dropToBottom(x_pos, y_pos_clicked);
 
 		if (Game.check.isPositionTaken(x_pos, y_pos)) {
 			alert(Game.config.takenMsg);
