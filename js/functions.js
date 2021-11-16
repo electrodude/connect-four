@@ -433,11 +433,10 @@ var Game = {};
 				for (let m = result.next_move; m; m = m.next_move)
 					pv2.push(m.key);
 				pv = pv2;
-				console.log(`${this.player?.name} score: ${result?.eval_score}; ${estimates} estimates, ${pvs} pvs, ${wins.black} black wins, ${wins.red} red wins, ${draws} draws, ${cutoffs} cutoffs, ${(new Date().getTime() - time_start)/1000} s`);
+				const msg2 = `${this.player?.name} score: ${result?.eval_score}; ${estimates} estimates, ${pvs} pvs, ${wins.black} black wins, ${wins.red} red wins, ${draws} draws, ${cutoffs} cutoffs, ${(new Date().getTime() - time_start)/1000} s`;
 				const msg = `Depth ${curr_depth}: PV ${pv.join(' ')}`;
-				const statusEl = document.querySelector('#engine-status');
-				statusEl.innerText = msg;
-				console.log(msg);
+				vars.engine_msg.update(`${msg}\n${msg2}`);
+				//console.log(msg);
 			}
 		} catch (e) {
 			console.error(e);
@@ -454,7 +453,7 @@ var Game = {};
 		console.log(`${this.player?.name} score: ${result?.eval_score}; ${estimates} estimates, ${pvs} pvs, ${wins.black} black wins, ${wins.red} red wins, ${draws} draws, ${cutoffs} cutoffs, ${(time_end - time_start)/1000} s`);
 		//${Object.keys(killer).length} killer entries, 
 
-		console.log(result);
+		//console.log(result);
 
 		return result?.next_move?.move;
 	}
@@ -682,5 +681,46 @@ var Game = {};
 			}
 			this.movesRemaining++;
 		}
+	}
+
+	Game.Board.prototype.dump = function() {
+		return {
+			cells: this.cells.map(player => player.name),
+			w: this.spec.w,
+			h: this.spec.h,
+			len: this.spec.len,
+			moves_per_ply: this.spec.moves_per_ply,
+			player: this.player.name,
+			movesRemaining: this.movesRemaining,
+		};
+	}
+
+	Game.load_board = function(dump) {
+		const spec = new Game.Spec(dump.w, dump.h, dump.len, dump.moves_per_ply);
+
+		const board = new Game.Board().init(spec);
+
+		board.player = Game.states[dump.player];
+		board.movesRemaining = dump.movesRemaining;
+
+		console.log(board);
+
+		for (let y = 0; y < spec.h; y++) {
+			for (let x = 0; x < spec.w; x++) {
+				const i = y*spec.w + x;
+				board.setCell(x, y, Game.states[dump.cells[i]]);
+			}
+		}
+
+		for (let x = 0; x < spec.w; x++) {
+			for (let y = spec.h-1; y >= 0; y--) {
+				const cell = board.getCell(x, y);
+				if (cell !== Game.states.empty) {
+					board.heights[x]--;
+				}
+			}
+		}
+
+		return board;
 	}
 })(Game);

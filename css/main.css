@@ -160,6 +160,9 @@ body {
 .board button:hover {
 	filter: brightness(75%);
 }
+.board button:disabled {
+	filter: brightness(100%);
+}
 /* no focus rings by default... focus borders get added via js */
 .board button:focus {
 	outline: 0;

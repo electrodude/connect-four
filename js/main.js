@@ -1,5 +1,80 @@
 // Top-level glue code
 
+// Engine interface
+Game.engine_state = new Var('engine_state');
+const engine_state = Game.engine_state;
+const engine_msg = new Var('engine_msg');
+engine_state.update('stopped');
+var engine = null;
+function init_engine() {
+	if (engine)
+		return;
+
+	try {
+		engine = new Worker('js/engine.js');
+		engine.onmessage = function(e) {
+			const data = e.data;
+			switch (data.type) {
+				case 'idle':
+					console.log('Engine idle');
+					engine_state.update('idle');
+					break;
+
+				case 'status':
+					engine_msg.update(data.msg);
+					break;
+
+				case 'result':
+					const moves = data.data;
+					console.log('Engine result:', moves);
+
+					if (engine_state.value != 'busy')
+						console.error(`Invalid transition: ${engine_state} -> idle`);
+					engine_state.update('idle');
+
+					if (moves)
+						Game.do.move(moves);
+
+					break;
+
+				default:
+					console.error('Unknown message from engine', data);
+					break;
+			}
+		}
+		engine.error = function(e) {
+			console.error('Engine error:', e.message);
+			// TODO: Notify user
+		}
+		engine.messageerror = function(e) {
+			console.error('Engine messageerror:', e.message);
+			// TODO: Notify user
+		}
+
+		engine.postMessage({type: 'reset'});
+
+		engine_state.update('starting');
+
+		console.info('Engine starting.');
+	} catch (e) {
+		alert('Failed to initialize engine.');
+		console.error(e);
+	}
+}
+
+function kill_engine() {
+	if (engine) {
+		engine.terminate();
+		console.info('Engine terminated.');
+	}
+	engine = null;
+	engine_state.update('stopped');
+}
+
+init_engine();
+
+
+// 
 Game.do = (function(Game) {
 	Game.board = new Var('board');
 	/**
@@ -7,9 +82,7 @@ Game.do = (function(Game) {
 	 * Update displayed current player
 	 * TODO: Rename to e.g. showBoard
 	 */
-	function setBoard(board) {
-		Game.board = board;
-
+	Game.board.on(function(board) {
 		// Update displayed board
 		for (let y = 0; y < board.spec.h; y++) {
 			for (let x = 0; x < board.spec.w; x++) {
@@ -55,7 +128,7 @@ Game.do = (function(Game) {
 		currentPlayerNameEl.style.display = result_status == 'draw' ? 'none' : '';
 		currentPlayerNameEl.contentEditable = !result_status;
 		movesRemainingEl.textContent = board.movesRemaining + " " + (board.movesRemaining == 1 ? "move" : "moves") + " remaining";
-		undoEl.disabled = !board.parent;
+		undoEl.disabled = !board.parent || vars.engine_state.value == 'busy';
 		playAgainBtnEl.disabled = !result_status;
 
 		if (result_status) {
@@ -77,7 +150,7 @@ Game.do = (function(Game) {
 		// Drop piece to the bottom of the column.
 		// Add the piece to the board.
 
-		const curr = Game.board;
+		const curr = Game.board.value;
 		const next = curr.move(moves, curr.player);
 		if (!next) {
 			console.log(`Illegal move: ${moves[0].x}, ${moves[0].y}`);
@@ -86,7 +159,7 @@ Game.do = (function(Game) {
 
 		console.log("Wins:", next.wins);
 
-		Game.do.setBoard(next);
+		Game.board.update(next);
 
 		if (next.results.length) {
 			return next.results;
@@ -100,22 +173,20 @@ Game.do = (function(Game) {
 	}
 
 	function move_ai() {
-		const curr = Game.board;
-		const max_depth = (curr.counts[Game.states.empty.name] - curr.movesRemaining) / curr.spec.len + 1;
-		const moves = Game.board.evaluate_position(Game.config.ai_depth, max_depth, Game.config.ai_time);
-		if (!moves) {
-			return;
-		}
-		Game.do.move(moves);
+		const curr = Game.board.value;
+		const data = curr.dump();
+		data.ai_depth = Game.config.ai_depth;
+		data.ai_time = Game.config.ai_time;
+		engine.postMessage({type: 'eval', data: data});
+		engine_state.update('busy');
 	}
 
 	function takeback() {
-		const curr = Game.board;
-		return curr.parent && Game.do.setBoard(curr.parent);
+		const curr = Game.board.value;
+		return curr.parent && Game.board.update(curr.parent);
 	}
 
 	return {
-		setBoard,
 		move,
 		move_ai,
 		takeback,
@@ -128,7 +199,7 @@ window.addEventListener('DOMContentLoaded', function() {
 		const spec = new Game.Spec(w, h, len, Game.config.movesPerTurn);
 
 		function on_cell_click(e, x, y) {
-			const board = Game.board;
+			const board = Game.board.value;
 			const results = board.results;
 			if (results.length && results[0].status)
 				return;
@@ -157,6 +228,7 @@ window.addEventListener('DOMContentLoaded', function() {
 				const cell = document.createElement('td');
 				cell.classList.add('board-cell');
 				const btn = document.createElement('button');
+				engine_state.on(value => btn.disabled = value == 'busy');
 				btn.addEventListener('click', (e) => on_cell_click(e, x, y));
 				cell.appendChild(btn);
 				row.appendChild(cell);
@@ -197,7 +269,9 @@ window.addEventListener('DOMContentLoaded', function() {
 		board_init.player = Game.config.startingPlayer;
 		board_init.movesRemaining = Game.config.startingMoves;
 
-		Game.do.setBoard(board_init);
+		Game.board.update(board_init);
+
+		engine.postMessage({type: 'reset'});
 	}
 
 	// Handle edge-cases in name changes
@@ -219,8 +293,33 @@ window.addEventListener('DOMContentLoaded', function() {
 	const playAgainBtnEl = document.querySelector('#play-again-btn');
 	const gameBoardEl = document.querySelector('#board');
 
+	const statusEl = document.querySelector('#engine-status');
+	engine_msg.on(msg => statusEl.innerText = msg);
+
+	engine_state.on(value => [engineEl.disabled, engineEl.innerText] = (function(){
+		switch (value) {
+			case 'busy'    : return [false, 'Interrupt Engine'];
+			case 'idle'    : return [false, 'Computer Move'   ];
+			case 'starting': return [true , 'Engine Starting' ];
+			case 'stopped' : return [true , 'Engine Stopped'  ];
+			default        : return [true , '(Invalid state!)'];
+		}})());
+	engine_state.on(value => engineEl.disabled = value != 'idle' && value != 'busy');
+	engine_state.on(value => undoEl.disabled = !Game.board.value?.parent || value == 'busy');
+
 	undoEl.addEventListener('click', () => Game.do.takeback());
-	engineEl.addEventListener('click', () => Game.do.move_ai());
+	engineEl.addEventListener('click', function() {
+		switch (engine_state.value) {
+			case 'idle': // busy
+				Game.do.move_ai();
+				break;
+			case 'busy': // interrupt
+				kill_engine();
+				init_engine();
+				break
+			default:
+		}
+	});
 	playAgainBtnEl.addEventListener('click', resetGame);
 	currentPlayerNameEl.addEventListener("keydown", handleNameChange);
 	otherPlayerNameEl.addEventListener("keydown", handleNameChange);
