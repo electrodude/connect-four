@@ -291,10 +291,11 @@ var Game = {};
 				for (const result of board.results) {
 					if (result.status == 'win') {
 						wins[result.player.name]++;
+						const score_win = 1e6 + board.counts[Game.states.empty.name];
 						if (result.player === player)
-							score +=  1e6;
+							score += score_win;
 						else
-							score += -1e6;
+							score -= score_win;
 					} else if (result.status == 'draw') {
 						draws++;
 					}
@@ -314,9 +315,11 @@ var Game = {};
 					const len_curr = run[player     .name];
 					const len_next = run[player.next.name];
 					if (len_curr && !len_next) {
-						score += len_curr*len_curr;
+						let subscore = len_curr-1;
+						score += subscore*subscore;
 					} else if (len_next && !len_curr) {
-						score -= len_next*len_next;
+						let subscore = len_next-1;
+						score -= subscore*subscore;
 					}
 				}
 			}
