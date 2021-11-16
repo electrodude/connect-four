@@ -60,10 +60,11 @@ var Game = {};
 		{x: 1, y:-1}
 	];
 
-	Game.Spec = function(w, h, len) {
+	Game.Spec = function(w, h, len, moves_per_ply) {
 		this.w = w;
 		this.h = h;
 		this.len = len;
+		this.moves_per_ply = moves_per_ply;
 		this.states = {...Game.states};
 
 		// Initialize table mapping each cell => [relevant runs]
@@ -104,7 +105,7 @@ var Game = {};
 		}
 
 		this.moves = [];
-		for (let i = 0; i <= Game.config.movesPerTurn; i++) {
+		for (let i = 0; i <= moves_per_ply; i++) {
 			const partial = [];
 			const maxdepth = i;
 			const width = this.w;
@@ -186,7 +187,7 @@ var Game = {};
 		}
 
 		for (let i = 0; i < spec.runs.length; i++) {
-				this.runs[i] = Game.player_counts(true);
+			this.runs[i] = Game.player_counts(true);
 		}
 		this.wins   = Game.player_counts(true, spec.runs.length);
 		this.counts = Game.player_counts(true);
@@ -348,10 +349,7 @@ var Game = {};
 					}
 				}
 				*/
-				const move = [];
-				for (const i in move_x) {
-					move[i] = {x: move_x[i]};
-				}
+				const move = move_x.map(x => ({x}));
 
 				const board_moved = board.move(move, board.player);
 
@@ -495,7 +493,7 @@ var Game = {};
 				});
 			}
 
-			if (count >= Game.config.countToWin) {
+			if (count >= this.spec.len) {
 				return false;
 			}
 		}
@@ -519,7 +517,7 @@ var Game = {};
 				if (curr === Game.states.dead)
 					return true;
 				// TODO: Stop once we've covered enough cells for a win
-				if (i >= Game.config.countToWin)
+				if (i >= this.spec.len)
 					return true;
 			});
 		}
@@ -556,7 +554,7 @@ var Game = {};
 
 			//console.log(x, y, v, count);
 
-			if (count >= Game.config.countToWin) {
+			if (count >= this.spec.len) {
 				result.status = 'win';
 				this.results.push(result);
 				return result;
@@ -658,7 +656,7 @@ var Game = {};
 		//if (!board2.results.length) {
 			if (board2.movesRemaining <= 0) {
 				// Change player and reset number of moves
-				board2.movesRemaining = Game.config.movesPerTurn;
+				board2.movesRemaining = this.spec.moves_per_ply;
 				board2.player = board2.player.next;
 			}
 		//}
@@ -668,13 +666,13 @@ var Game = {};
 
 	// TODO
 	Game.Board.prototype.unmove = function(moves) {
-		if (this.movesRemaining == Game.config.movesPerTurn) {
+		if (this.movesRemaining == this.spec.moves_per_ply) {
 			// Change player back, with zero moves remaining
 			this.movesRemaining = 0;
 			this.player = this.player.prev;
 		}
-		if (this.movesRemaining + moves.length > Game.config.movesPerTurn) {
-			console.error(`Can't take back ${moves.length} moves, only ${Game.config.movesPerTurn - this.movesRemaining}!`);
+		if (this.movesRemaining + moves.length > this.spec.moves_per_ply) {
+			console.error(`Can't take back ${moves.length} moves, only ${this.spec.moves_per_ply - this.movesRemaining}!`);
 		}
 
 		for (const move of moves) {
@@ -686,117 +684,3 @@ var Game = {};
 		}
 	}
 })(Game);
-
-Game.do = (function() {
-	/**
-	 * Print the contents of our Game.board state to the html page.
-	 * Update displayed current player
-	 * TODO: Rename to e.g. showBoard
-	 */
-	function setBoard(board) {
-		Game.board = board;
-
-		// Update displayed board
-		for (let y = 0; y < board.spec.h; y++) {
-			for (let x = 0; x < board.spec.w; x++) {
-				const row = document.querySelector('tr:nth-child(' + (1 + y) + ')');
-				const cell = row.querySelector('td:nth-child(' + (2 + x) + ')');
-				const button = cell.firstElementChild;
-				const disc = board.getCell(x, y);
-				for (const name in Game.states) {
-					if (disc.name === name)
-						button.classList.add(name);
-					else
-						button.classList.remove(name);
-				}
-			}
-		}
-
-		// Update the players in the UI.
-		const currentPlayerNameEl = document.querySelector('#current-player');
-		const otherPlayerNameEl = document.querySelector('#other-player');
-
-		const currentPlayer = board.player;
-		const otherPlayer = currentPlayer.next;
-
-		currentPlayerNameEl.classList.remove(otherPlayer.name);
-		currentPlayerNameEl.classList.add(currentPlayer.name);
-		currentPlayerNameEl.textContent = currentPlayer.user_name;
-
-		otherPlayerNameEl.classList.remove(currentPlayer.name);
-		otherPlayerNameEl.classList.add(otherPlayer.name);
-		otherPlayerNameEl.textContent = otherPlayer.user_name;
-
-		// Update top controls
-		const controlsWrapperEl = document.querySelector('.top-text');
-		const movesRemainingEl = document.querySelector('#moves-remaining');
-
-		const prefixEl = document.querySelector('#prefix');
-		const undoEl = document.querySelector('#undo');
-		const playAgainBtnEl = document.querySelector('#play-again-btn');
-
-		const results = board.results;
-		const result_status = results[0]?.status;
-
-		currentPlayerNameEl.style.display = result_status == 'draw' ? 'none' : '';
-		currentPlayerNameEl.contentEditable = !result_status;
-		movesRemainingEl.textContent = board.movesRemaining + " " + (board.movesRemaining == 1 ? "move" : "moves") + " remaining";
-		undoEl.disabled = !Game.board.parent;
-		playAgainBtnEl.disabled = !result_status;
-
-		if (result_status) {
-			controlsWrapperEl.classList.add('game-over');
-			if (result_status == 'win') {
-				prefixEl.textContent = Game.config.winMsg;
-			} else if (result_status == 'draw') {
-				prefixEl.textContent = Game.config.drawMsg;
-			}
-		} else {
-			prefixEl.textContent = Game.config.currentMsg;
-			controlsWrapperEl.classList.remove('game-over');
-		}
-
-		return board;
-	}
-
-	function move(moves) {
-		// Drop piece to the bottom of the column.
-		// Add the piece to the board.
-
-		const next = Game.board.move(moves, Game.board.player);
-		if (!next) {
-			console.log(`Illegal move: ${moves[0].x}, ${moves[0].y}`);
-			return false;
-		}
-
-		console.log("Wins:", next.wins);
-
-		Game.do.setBoard(next);
-
-		if (Game.board.results) {
-			return Game.board.results;
-		}
-
-		return true;
-	}
-
-	function move_ai() {
-		const max_depth = (Game.board.counts[Game.states.empty.name] - Game.board.movesRemaining) / Game.config.movesPerTurn + 1;
-		const moves = Game.board.evaluate_position(Game.config.ai_depth, max_depth, Game.config.ai_time);
-		if (!moves) {
-			return;
-		}
-		Game.do.move(moves);
-	}
-
-	function takeback() {
-		return Game.board.parent && Game.do.setBoard(Game.board.parent);
-	}
-
-	return {
-		setBoard,
-		move,
-		move_ai,
-		takeback,
-	};
-})();

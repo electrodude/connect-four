@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8">
 		<title>Double Connect Four</title>
-		<meta name="description" content="Play two-player Double Connect Four online. To win, be the first to form a horizontal, vertical, or diagonal line with four of your discs.">
+		<meta name="description" content="Play Double Connect Four against a computer.">
 
 		<meta charset="utf-8">
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -32,8 +32,10 @@
 					</h3>
 					<div class="controls">
 						<button id="undo">Take back move</button>
-						<button id="ai">Computer Move</button>
+						<button id="engine">Computer Move</button>
 					</div>
+					<input type="checkbox" id="engine_black">Computer Black</input>
+					<input type="checkbox" id="engine_red">Computer Red</input>
 					<div id="engine-status" class="engine-status"></div>
 					<div id="play-again" class="play-again">
 						<button class="play-again-btn" id="play-again-btn">Play Again</button>
@@ -41,7 +43,7 @@
 				</div>
 			</div>
 			<!-- TODO: Record of moves, other statistics -->
-			<table id="board" class="board"><!-- filled programmatically --></table>
+			<div id="board"><!-- filled programmatically --></div>
 		</section>
 
 		<script src="js/functions.js"></script>

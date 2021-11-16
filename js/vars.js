@@ -4,7 +4,7 @@ Game.config = {
 	currentMsg: "Current player is: ",
 	//winMsg: "The winner is: ",
 	winMsg: "The loser is: ",
-	drawMsg: "This game is a draw.",
+	drawMsg: "The game is a draw.",
 
 	countToWin: 4,
 
