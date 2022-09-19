@@ -1,3 +1,17 @@
+// Widget manipulators
+function class_if(node, c, map) {
+	if (!map)
+		map = (value, node) => value;
+	return function(value) {
+		if (map(value, node)) {
+			node.classList.add(c);
+		} else {
+			node.classList.remove(c);
+		}
+	}
+}
+
+
 // Dumb MVC
 const vars = {};
 function Var(name) {

@@ -102,6 +102,9 @@ body {
 	border-bottom: 1px solid #bbb;
 	padding: 0 1.25em 0 0.25em;
 }
+#engine.busy {
+	background-color: red;
+}
 
 .controls {
 	margin: 1.25em 0 0.25em 0;

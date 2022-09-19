@@ -28,9 +28,13 @@ function init_engine() {
 					const moves = data.data;
 					console.log('Engine result:', moves);
 
-					if (engine_state.value != 'busy')
-						console.error(`Invalid transition: ${engine_state} -> idle`);
+					const engine_state_prev = engine_state.value;
 					engine_state.update('idle');
+
+					if (engine_state_prev != 'busy') {
+						console.error(`Invalid transition: ${engine_state} (expected busy) -> idle.  Ignoring result.`);
+						break;
+					}
 
 					if (moves)
 						Game.do.move(moves);
@@ -128,7 +132,7 @@ Game.do = (function(Game) {
 		currentPlayerNameEl.style.display = result_status == 'draw' ? 'none' : '';
 		currentPlayerNameEl.contentEditable = !result_status;
 		movesRemainingEl.textContent = board.movesRemaining + " " + (board.movesRemaining == 1 ? "move" : "moves") + " remaining";
-		undoEl.disabled = !board.parent || vars.engine_state.value == 'busy';
+		undoEl.disabled = !board.parent;
 		playAgainBtnEl.disabled = !result_status;
 
 		if (result_status) {
@@ -305,12 +309,19 @@ window.addEventListener('DOMContentLoaded', function() {
 			default        : return [true , '(Invalid state!)'];
 		}})());
 	engine_state.on(value => engineEl.disabled = value != 'idle' && value != 'busy');
-	engine_state.on(value => undoEl.disabled = !Game.board.value?.parent || value == 'busy');
+	engine_state.on(class_if(engineEl, 'busy', value => value == 'busy'));
 
-	undoEl.addEventListener('click', () => Game.do.takeback());
+	undoEl.addEventListener('click', function() {
+		if (engine_state.value == 'busy') {
+			// Interrupt engine if busy
+			kill_engine();
+			init_engine();
+		}
+		Game.do.takeback()
+	});
 	engineEl.addEventListener('click', function() {
 		switch (engine_state.value) {
-			case 'idle': // busy
+			case 'idle': // move
 				Game.do.move_ai();
 				break;
 			case 'busy': // interrupt
